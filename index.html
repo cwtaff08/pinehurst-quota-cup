@@ -283,10 +283,17 @@ function hcpNum(str){
 const isPlus=str=>/^\s*[+\-]/.test(String(str==null?'':str));
 // USGA-style course handicap: Index x (Slope/113) + (Rating - Par). With no slope/rating entered,
 // slope defaults to 113 and rating defaults to par, which reduces this to the plain index.
-function courseHandicap(idx,slope,rating,par){
+function teeVal(str){
+  const t=String(str==null?'':str).trim();
+  if(t==='') return null;
+  const n=parseFloat(t);
+  return isFinite(n)?n:null;
+}
+function courseHandicap(idx,slopeStr,ratingStr,par){
   if(idx==null) return null;
-  const s=(typeof slope==='number'&&isFinite(slope)&&slope>0)?slope:113;
-  const r=(typeof rating==='number'&&isFinite(rating))?rating:par;
+  const sv=teeVal(slopeStr), rv=teeVal(ratingStr);
+  const s=(sv!=null&&sv>0)?sv:113;
+  const r=rv!=null?rv:par;
   return Math.round(idx*(s/113)+(r-par));
 }
 function coursePar(r){
@@ -342,9 +349,8 @@ function cleanNums(t,max){
   return o;
 }
 function cleanTee(t){
-  const slope=t&&typeof t.slope==='number'&&isFinite(t.slope)&&t.slope>0&&t.slope<200?Math.round(t.slope):null;
-  const rating=t&&typeof t.rating==='number'&&isFinite(t.rating)&&t.rating>0&&t.rating<100?q2(t.rating):null;
-  return {name:String((t&&t.name)||'').slice(0,30),slope,rating};
+  const clean=v=>String(v==null?'':v).trim().slice(0,10);
+  return {name:String((t&&t.name)||'').slice(0,30),slope:clean(t&&t.slope),rating:clean(t&&t.rating)};
 }
 function cleanQuotas(t){
   const o={};
@@ -709,6 +715,10 @@ function renderCard(C){
   return h;
 }
 
+function teeNoteText(i,par,tee){
+  if(teeVal(tee.slope)==null&&teeVal(tee.rating)==null) return 'Par '+par+'. No slope or rating yet \u2014 quotas use the plain handicap index for this round.';
+  return 'Par '+par+'. '+state.players.filter(pl=>hcpNum(pl.hcp)!=null).map(pl=>esc(first(pl.name))+' '+courseHandicap(hcpNum(pl.hcp),tee.slope,tee.rating,par)).join(', ');
+}
 function renderSetup(){
   let h='';
   if(!state.configured){
@@ -731,9 +741,9 @@ function renderSetup(){
     return '<div class="teerow"><div class="fld"><span>Round '+(i+1)+'</span><select data-f="coursepick" data-i="'+i+'" aria-label="Course for round '+(i+1)+'">'+['4','2','1','3','10'].map(n=>'<option value="'+n+'"'+(k===n?' selected':'')+'>Pinehurst No. '+n+'</option>').join('')+'<option value="custom"'+(k==='custom'?' selected':'')+'>Other course</option></select></div>'+
       (k==='custom'?'<label class="fld"><span>Course name</span><input type="text" data-f="course" data-i="'+i+'" value="'+esc(c)+'" maxlength="40" placeholder="Course name"></label>':'')+
       '<div class="teegrid"><label class="fld"><span>Tee name</span><input type="text" data-f="teename" data-i="'+i+'" value="'+esc(tee.name||'')+'" maxlength="30" placeholder="e.g. Blue"></label>'+
-      '<label class="fld"><span>Slope</span><input type="number" inputmode="numeric" min="55" max="155" step="1" data-f="slope" data-i="'+i+'" value="'+(tee.slope==null?'':tee.slope)+'" placeholder="\u2013"></label>'+
-      '<label class="fld"><span>Rating</span><input type="number" inputmode="decimal" step="0.1" data-f="rating" data-i="'+i+'" value="'+(tee.rating==null?'':tee.rating)+'" placeholder="'+par+'.0"></label></div>'+
-      (tee.slope!=null||tee.rating!=null?'<p class="cnote" style="margin:2px 0 0">Par '+par+'. '+state.players.filter(pl=>hcpNum(pl.hcp)!=null).map(pl=>first(pl.name)+' '+courseHandicap(hcpNum(pl.hcp),tee.slope,tee.rating,par)).join(', ')+'</p>':'')+
+      '<label class="fld"><span>Slope</span><input type="text" inputmode="decimal" autocomplete="off" data-f="slope" data-i="'+i+'" value="'+esc(tee.slope||'')+'" placeholder="e.g. 135"></label>'+
+      '<label class="fld"><span>Rating</span><input type="text" inputmode="decimal" autocomplete="off" data-f="rating" data-i="'+i+'" value="'+esc(tee.rating||'')+'" placeholder="e.g. 73.7"></label></div>'+
+      '<p class="cnote" id="teenote-'+i+'" style="margin:2px 0 0">'+teeNoteText(i,par,tee)+'</p>'+
     '</div>';
   }).join('')+'</div></section>';
   h+='<section class="panel"><h2>How points work</h2><p>Enter strokes on each hole after setting its par. Gross Stableford points follow from that: double bogey or worse 0, bogey 1, par 2, birdie 4, eagle or better 6. Your points for the round minus your quota is your score. The leaderboard adds those up across all five rounds.</p><p>Each round\u2019s quota starts from a course handicap: index \u00d7 (Slope \u00f7 113) + (Rating \u2212 par), rounded to a whole number. Add a tee\u2019s Slope and Rating above and this happens automatically; leave them blank and it falls back to 35 minus the plain index.</p></section>';
@@ -916,8 +926,13 @@ document.addEventListener('input',e=>{
   }
   else if(f==='course'){state.courses[+t.dataset.i]=t.value;save();}
   else if(f==='teename'){state.rounds[+t.dataset.i].tee.name=t.value;save();}
-  else if(f==='slope'){const rd=state.rounds[+t.dataset.i];rd.tee.slope=t.value===''?null:Math.max(55,Math.min(155,Math.round(+t.value)));save();render();}
-  else if(f==='rating'){const rd=state.rounds[+t.dataset.i];rd.tee.rating=t.value===''?null:q2(+t.value);save();render();}
+  else if(f==='slope'||f==='rating'){
+    const i=+t.dataset.i, rd=state.rounds[i];
+    rd.tee[f]=t.value;
+    save();
+    const note=$('#teenote-'+i);
+    if(note) note.innerHTML=teeNoteText(i,coursePar(i),rd.tee);
+  }
   else if(f==='total'){
     const r=ui.round, id=t.dataset.p, rd=state.rounds[r];
     if(t.value===''||!isFinite(+t.value)) delete rd.totals[id];
