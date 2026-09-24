@@ -149,6 +149,8 @@ td.livecell .cd{font-style:italic;opacity:.9}
 
 /* setup */
 .setrow{display:grid;grid-template-columns:minmax(0,1fr) 56px minmax(0,1fr);gap:8px;margin-bottom:14px}
+.teerow{border:1px solid var(--line);border-radius:10px;padding:10px 10px 4px;margin-bottom:10px;background:var(--bg)}
+.teegrid{display:grid;grid-template-columns:1fr 72px 84px;gap:8px;margin-top:8px}
 .plusbtn{width:100%;min-height:44px;border:1px solid var(--line);background:var(--bg);border-radius:8px;font:700 26px/1 var(--num)}
 .plusbtn[aria-pressed="true"]{background:var(--sel-bg);color:var(--sel-ink);border-color:var(--sel-bg)}
 .fld span{display:block;font-size:13px;color:var(--muted);margin-bottom:3px}
@@ -249,7 +251,7 @@ table.card td.sum.part{color:var(--muted);font-style:italic}
 <script>
 (function(){
 'use strict';
-const KEY='pinehurst-quota-cup-v1', NR=5, NH=18, MINUS='\u2212', VER=6, QBASE=35;
+const KEY='pinehurst-quota-cup-v1', NR=5, NH=18, MINUS='\u2212', VER=7, QBASE=35;
 const OLD_MAP={0:0,1:1,2:2,3:4,4:6,5:6};
 const P2S={6:2,4:3,2:4,1:5,0:6};
 const RND=['hundredth','quarter','nearest'];
@@ -279,6 +281,18 @@ function hcpNum(str){
   return (t[0]==='+'||t[0]==='-')?-n:n;
 }
 const isPlus=str=>/^\s*[+\-]/.test(String(str==null?'':str));
+// USGA-style course handicap: Index x (Slope/113) + (Rating - Par). With no slope/rating entered,
+// slope defaults to 113 and rating defaults to par, which reduces this to the plain index.
+function courseHandicap(idx,slope,rating,par){
+  if(idx==null) return null;
+  const s=(typeof slope==='number'&&isFinite(slope)&&slope>0)?slope:113;
+  const r=(typeof rating==='number'&&isFinite(rating))?rating:par;
+  return Math.round(idx*(s/113)+(r-par));
+}
+function coursePar(r){
+  const pars=state.rounds[r].pars;
+  return (pars&&pars.every(v=>v!=null))?pars.reduce((a,b)=>a+b,0):72;
+}
 const q2=n=>Math.round(n*100)/100;
 const rhu=(x,k)=>Math.round(x*k+1e-9)/k;
 function fmt(n){
@@ -297,7 +311,7 @@ function defaults(){
     players:names.map((n,i)=>({id:pidOf(i),name:n,hcp:'',quota:18})),
     settings:{factor:0.5,rounding:'hundredth'},
     courses,
-    rounds:courses.map(c=>({mode:'holes',holes:{},totals:{},quotaOverride:{},pars:parsForName(c)||Array(NH).fill(null),legacy:{}}))
+    rounds:courses.map(c=>({mode:'holes',holes:{},totals:{},quotaOverride:{},pars:parsForName(c)||Array(NH).fill(null),legacy:{},tee:{name:'',slope:null,rating:null}}))
   };
 }
 function cleanPars(a){
@@ -326,6 +340,11 @@ function cleanNums(t,max){
     if(typeof v==='number'&&isFinite(v)) o[pidOf(i)]=Math.max(0,Math.min(max,Math.round(v)));
   }
   return o;
+}
+function cleanTee(t){
+  const slope=t&&typeof t.slope==='number'&&isFinite(t.slope)&&t.slope>0&&t.slope<200?Math.round(t.slope):null;
+  const rating=t&&typeof t.rating==='number'&&isFinite(t.rating)&&t.rating>0&&t.rating<100?q2(t.rating):null;
+  return {name:String((t&&t.name)||'').slice(0,30),slope,rating};
 }
 function cleanQuotas(t){
   const o={};
@@ -361,7 +380,7 @@ function normalize0(s){
         holes:ch.holes,
         totals:cleanNums(r&&r.totals,108),
         quotaOverride:cleanQuotas(r&&r.quotaOverride),
-        pars,legacy
+        pars,legacy,tee:cleanTee(r&&r.tee)
       };
     })
   };
@@ -432,18 +451,27 @@ function playerRound(r,id){
 function compute(){
   return state.players.map(p=>{
     const rounds=[];
-    let q=+p.quota, total=0, pts=0;
+    const idx=hcpNum(p.hcp);
+    let adjustSum=0, total=0, pts=0;
     for(let r=0;r<NR;r++){
+      const par=coursePar(r), tee=state.rounds[r].tee||{};
+      const ch=idx==null?null:courseHandicap(idx,tee.slope,tee.rating,par);
+      const baseline=idx==null?(+p.quota||0):Math.max(0,QBASE-ch);
+      const auto=q2(baseline+adjustSum);
       const ov=state.rounds[r].quotaOverride[p.id];
-      const quota=ov!=null?ov:q;
+      const quota=ov!=null?ov:auto;
       const pr=playerRound(r,p.id);
       const pending=r>0&&!rounds[r-1].complete;
       let diff=null;
       if(pr.thru>0) diff=pr.complete?pr.pts-quota:pr.pts-quota*pr.thru/NH;
-      rounds.push({quota,auto:q,overridden:ov!=null,pending,pts:pr.pts,thru:pr.thru,complete:pr.complete,diff});
+      rounds.push({quota,auto,overridden:ov!=null,pending,pts:pr.pts,thru:pr.thru,complete:pr.complete,diff,ch,par,tee});
       if(diff!=null) total+=diff;
       if(pr.pts!=null) pts+=pr.pts;
-      q=pr.complete?adjustQuota(quota,pr.pts):quota;
+      if(pr.complete){
+        const raw=(pr.pts-quota)*state.settings.factor, m=state.settings.rounding;
+        const k=m==='nearest'?1:m==='quarter'?4:100;
+        adjustSum+=Math.sign(raw)*rhu(Math.abs(raw),k);
+      }
     }
     const nowIdx=rounds.findIndex(x=>!x.complete);
     return {p,rounds,total,pts,nowIdx,nowQuota:nowIdx>=0?rounds[nowIdx].quota:q};
@@ -698,11 +726,17 @@ function renderSetup(){
      '<label class="fld"><span>Move quota by</span><select data-f="factor">'+FACTORS.map(f=>'<option value="'+f+'"'+(f===state.settings.factor?' selected':'')+'>'+(f===0?'0% (never)':Math.round(f*100)+'% of the gap'+(f===0.5?' (half)':''))+'</option>').join('')+'</select></label>'+
      '<label class="fld"><span>Rounding</span><select data-f="rounding"><option value="hundredth"'+(state.settings.rounding==='hundredth'?' selected':'')+'>Two decimals</option><option value="quarter"'+(state.settings.rounding==='quarter'?' selected':'')+'>Nearest 0.25</option><option value="nearest"'+(state.settings.rounding==='nearest'?' selected':'')+'>Whole points</option></select></label></div>'+
      '<p class="example" id="example">'+exampleText()+'</p></section>';
-  h+='<section class="panel"><h2>Courses</h2><p class="muted sm">Pars for each Pinehurst course load automatically from its published scorecard.</p><div style="margin-top:10px">'+state.courses.map((c,i)=>{
-    const k=courseKey(c);
-    return '<div class="fld" style="margin-bottom:10px"><span>Round '+(i+1)+'</span><select data-f="coursepick" data-i="'+i+'" aria-label="Course for round '+(i+1)+'">'+['4','2','1','3','10'].map(n=>'<option value="'+n+'"'+(k===n?' selected':'')+'>Pinehurst No. '+n+'</option>').join('')+'<option value="custom"'+(k==='custom'?' selected':'')+'>Other course</option></select>'+(k==='custom'?'<input type="text" style="margin-top:6px" data-f="course" data-i="'+i+'" value="'+esc(c)+'" maxlength="40" aria-label="Course name for round '+(i+1)+'" placeholder="Course name">':'')+'</div>';
+  h+='<section class="panel"><h2>Courses and tees</h2><p class="muted sm">Pars load automatically for each Pinehurst course. Add the tee\u2019s Slope and Course Rating the day you play, and quotas adjust for that tee\u2019s difficulty.</p><div style="margin-top:10px">'+state.courses.map((c,i)=>{
+    const k=courseKey(c), tee=state.rounds[i].tee||{}, par=coursePar(i);
+    return '<div class="teerow"><div class="fld"><span>Round '+(i+1)+'</span><select data-f="coursepick" data-i="'+i+'" aria-label="Course for round '+(i+1)+'">'+['4','2','1','3','10'].map(n=>'<option value="'+n+'"'+(k===n?' selected':'')+'>Pinehurst No. '+n+'</option>').join('')+'<option value="custom"'+(k==='custom'?' selected':'')+'>Other course</option></select></div>'+
+      (k==='custom'?'<label class="fld"><span>Course name</span><input type="text" data-f="course" data-i="'+i+'" value="'+esc(c)+'" maxlength="40" placeholder="Course name"></label>':'')+
+      '<div class="teegrid"><label class="fld"><span>Tee name</span><input type="text" data-f="teename" data-i="'+i+'" value="'+esc(tee.name||'')+'" maxlength="30" placeholder="e.g. Blue"></label>'+
+      '<label class="fld"><span>Slope</span><input type="number" inputmode="numeric" min="55" max="155" step="1" data-f="slope" data-i="'+i+'" value="'+(tee.slope==null?'':tee.slope)+'" placeholder="\u2013"></label>'+
+      '<label class="fld"><span>Rating</span><input type="number" inputmode="decimal" step="0.1" data-f="rating" data-i="'+i+'" value="'+(tee.rating==null?'':tee.rating)+'" placeholder="'+par+'.0"></label></div>'+
+      (tee.slope!=null||tee.rating!=null?'<p class="cnote" style="margin:2px 0 0">Par '+par+'. '+state.players.filter(pl=>hcpNum(pl.hcp)!=null).map(pl=>first(pl.name)+' '+courseHandicap(hcpNum(pl.hcp),tee.slope,tee.rating,par)).join(', ')+'</p>':'')+
+    '</div>';
   }).join('')+'</div></section>';
-  h+='<section class="panel"><h2>How points work</h2><p>Enter strokes on each hole after setting its par. Gross Stableford points follow from that: double bogey or worse 0, bogey 1, par 2, birdie 4, eagle or better 6. Your points for the round minus your quota is your score. The leaderboard adds those up across all five rounds.</p></section>';
+  h+='<section class="panel"><h2>How points work</h2><p>Enter strokes on each hole after setting its par. Gross Stableford points follow from that: double bogey or worse 0, bogey 1, par 2, birdie 4, eagle or better 6. Your points for the round minus your quota is your score. The leaderboard adds those up across all five rounds.</p><p>Each round\u2019s quota starts from a course handicap: index \u00d7 (Slope \u00f7 113) + (Rating \u2212 par), rounded to a whole number. Add a tee\u2019s Slope and Rating above and this happens automatically; leave them blank and it falls back to 35 minus the plain index.</p></section>';
   h+='<section class="panel"><h2>Save and reset</h2><p class="muted sm">Scores are saved in this browser on this device. Export a backup to move them to another phone.</p><div class="actions"><button class="btn sm" data-act="export">Export backup</button><button class="btn sm" data-act="import">Import backup</button><button class="btn sm danger" data-act="clear">Clear all scores</button></div></section>';
   return h;
 }
@@ -881,6 +915,9 @@ document.addEventListener('input',e=>{
     p.quota=t.value===''?0:Math.max(0,q2(+t.value)||0);save();
   }
   else if(f==='course'){state.courses[+t.dataset.i]=t.value;save();}
+  else if(f==='teename'){state.rounds[+t.dataset.i].tee.name=t.value;save();}
+  else if(f==='slope'){const rd=state.rounds[+t.dataset.i];rd.tee.slope=t.value===''?null:Math.max(55,Math.min(155,Math.round(+t.value)));save();render();}
+  else if(f==='rating'){const rd=state.rounds[+t.dataset.i];rd.tee.rating=t.value===''?null:q2(+t.value);save();render();}
   else if(f==='total'){
     const r=ui.round, id=t.dataset.p, rd=state.rounds[r];
     if(t.value===''||!isFinite(+t.value)) delete rd.totals[id];
