@@ -208,6 +208,20 @@ table.card td.sum.part{color:var(--muted);font-style:italic}
 .mk.g{border:1.5px solid currentColor;color:var(--neg)}
 .mk.d{border:4px double currentColor;color:var(--neg)}
 .tblwrap table.sumtbl{min-width:420px}
+.moneyrow{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px;background:var(--surface)}
+.moneyhead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.moneyhead input{flex:1;font-weight:600;border:1px solid transparent;background:transparent;padding:6px 4px;min-height:36px}
+.moneyhead input:focus{border-color:var(--line);background:var(--bg)}
+.balchip{font:700 13px/1 var(--num);padding:5px 9px;border-radius:999px;white-space:nowrap}
+.balchip.ok{background:rgba(30,116,68,.14);color:var(--pos)}
+.balchip.bad{background:rgba(169,53,41,.14);color:var(--neg)}
+.moneygrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.moneycell{display:flex;flex-direction:column;gap:4px}
+.mcname{font-size:12px;color:var(--muted)}
+.mcrow{display:flex;gap:6px}
+.mcrow input{flex:1;min-width:0;text-align:right;font-family:var(--num);font-weight:600}
+.signbtn{width:38px;min-height:40px;flex:0 0 auto;border:1px solid var(--line);background:var(--bg);border-radius:8px;font:700 20px/1 var(--num)}
+.signbtn.neg{background:var(--sel-bg);color:var(--sel-ink);border-color:var(--sel-bg)}
 .cnote{font-size:14px;color:var(--muted);margin:4px 2px 12px}
 </style>
 </head>
@@ -244,6 +258,7 @@ table.card td.sum.part{color:var(--muted);font-style:italic}
   <button data-act="tab" data-tab="board" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20v-7M12 20V5M19 20v-10"/></svg>Board</button>
   <button data-act="tab" data-tab="score" aria-current="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V4M6 4l12 4.5L6 13"/></svg>Score</button>
   <button data-act="tab" data-tab="card" aria-current="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M10 5v14"/></svg>Card</button>
+  <button data-act="tab" data-tab="money" aria-current="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M8 7.5c0-1.5 1.5-2.5 4-2.5s4 1.2 4 2.7c0 3.3-8 1.8-8 5.1 0 1.5 1.5 2.7 4 2.7s4-1 4-2.5"/></svg>Money</button>
   <button data-act="tab" data-tab="setup" aria-current="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9M15 4.5v5M9 14.5v5"/></svg>Setup</button>
 </nav>
 <noscript><p style="padding:16px">This tracker needs JavaScript.</p></noscript>
@@ -251,7 +266,7 @@ table.card td.sum.part{color:var(--muted);font-style:italic}
 <script>
 (function(){
 'use strict';
-const KEY='pinehurst-quota-cup-v1', NR=5, NH=18, MINUS='\u2212', VER=7, QBASE=35;
+const KEY='pinehurst-quota-cup-v1', NR=5, NH=18, MINUS='\u2212', VER=8, QBASE=35;
 const OLD_MAP={0:0,1:1,2:2,3:4,4:6,5:6};
 const P2S={6:2,4:3,2:4,1:5,0:6};
 const RND=['hundredth','quarter','nearest'];
@@ -296,9 +311,45 @@ function courseHandicap(idx,slopeStr,ratingStr,par){
   const r=rv!=null?rv:par;
   return Math.round(idx*(s/113)+(r-par));
 }
+function setMoney(i,pid,val){
+  state.money[i].amounts[pid]=val;
+  save();
+  const bal=$('#moneybal-'+i); if(bal) bal.innerHTML=moneyBalanceHTML(i);
+  const tot=$('#moneytot-'+pid); if(tot) tot.textContent=fmtMoney(playerMoneyTotal(pid));
+  const grand=$('#moneygrand'); if(grand) grand.textContent=moneyGrandText();
+  const sb=$('.signbtn[data-i="'+i+'"][data-p="'+pid+'"]');
+  if(sb){const neg=/^\s*-/.test(String(val||''));sb.classList.toggle('neg',neg);sb.setAttribute('aria-pressed',String(neg));}
+}
 function coursePar(r){
   const pars=state.rounds[r].pars;
   return (pars&&pars.every(v=>v!=null))?pars.reduce((a,b)=>a+b,0):72;
+}
+function moneyNum(str){
+  const t=String(str==null?'':str).trim().replace(/^\$/,'');
+  if(t==='') return 0;
+  const n=parseFloat(t);
+  return isFinite(n)?n:0;
+}
+function fmtMoney(n){
+  const r=Math.round(n*100)/100, s=Math.abs(r).toFixed(2).replace(/\.00$/,'');
+  return r>0?'+$'+s:r<0?MINUS+'$'+s:'$0';
+}
+function moneyEntrySum(i){
+  let s=0; state.players.forEach(p=>{s+=moneyNum(state.money[i].amounts[p.id]);});
+  return s;
+}
+function moneyBalanceHTML(i){
+  const s=moneyEntrySum(i), ok=Math.abs(Math.round(s*100)/100)<0.005;
+  return '<span class="balchip '+(ok?'ok':'bad')+'">'+(ok?'Balanced':fmtMoney(s)+' off')+'</span>';
+}
+function playerMoneyTotal(id){
+  let s=0; for(let i=0;i<6;i++) s+=moneyNum(state.money[i].amounts[id]);
+  return s;
+}
+function moneyGrandText(){
+  let s=0; for(let i=0;i<6;i++) s+=moneyEntrySum(i);
+  const ok=Math.abs(Math.round(s*100)/100)<0.005;
+  return ok?'Everything balances \u2014 what one golfer wins, another loses.':'Off by '+fmtMoney(s)+' total. Check for a typo or a missing entry.';
 }
 const q2=n=>Math.round(n*100)/100;
 const rhu=(x,k)=>Math.round(x*k+1e-9)/k;
@@ -318,7 +369,8 @@ function defaults(){
     players:names.map((n,i)=>({id:pidOf(i),name:n,hcp:'',quota:18})),
     settings:{factor:0.5,rounding:'hundredth'},
     courses,
-    rounds:courses.map(c=>({mode:'holes',holes:{},totals:{},quotaOverride:{},pars:parsForName(c)||Array(NH).fill(null),legacy:{},tee:{name:'',slope:null,rating:null}}))
+    rounds:courses.map(c=>({mode:'holes',holes:{},totals:{},quotaOverride:{},pars:parsForName(c)||Array(NH).fill(null),legacy:{},tee:{name:'',slope:null,rating:null}})),
+    money:Array.from({length:6},(_,i)=>({label:i<5?('Round '+(i+1)):'Overall',amounts:{}}))
   };
 }
 function cleanPars(a){
@@ -360,6 +412,15 @@ function cleanQuotas(t){
   }
   return o;
 }
+function cleanMoney(arr){
+  const out=[];
+  for(let i=0;i<6;i++){
+    const m=arr&&arr[i], amounts={};
+    for(let k=0;k<4;k++){const id=pidOf(k), v=m&&m.amounts&&m.amounts[id]; if(v!=null) amounts[id]=String(v).trim().slice(0,12);}
+    out.push({label:String((m&&m.label)!=null?m.label:(i<5?('Round '+(i+1)):'Overall')).slice(0,30),amounts});
+  }
+  return out;
+}
 function normalize0(s){
   const d=defaults();
   if(!s||!Array.isArray(s.players)||s.players.length!==4||!Array.isArray(s.rounds)||s.rounds.length!==NR) throw new Error('Not a valid Quota Cup backup.');
@@ -388,7 +449,8 @@ function normalize0(s){
         quotaOverride:cleanQuotas(r&&r.quotaOverride),
         pars,legacy,tee:cleanTee(r&&r.tee)
       };
-    })
+    }),
+    money:cleanMoney(s.money)
   };
 }
 function migratePars(out){
@@ -719,6 +781,21 @@ function teeNoteText(i,par,tee){
   if(teeVal(tee.slope)==null&&teeVal(tee.rating)==null) return 'Par '+par+'. No slope or rating yet \u2014 quotas use the plain handicap index for this round.';
   return 'Par '+par+'. '+state.players.filter(pl=>hcpNum(pl.hcp)!=null).map(pl=>esc(first(pl.name))+' '+courseHandicap(hcpNum(pl.hcp),tee.slope,tee.rating,par)).join(', ');
 }
+function renderMoney(){
+  let h='<section class="panel"><h2>Money</h2><p class="muted sm">Log what each golfer won or lost \u2014 a round\u2019s drinks, the trip prize, a skin, anything. Positive is money they collect, negative is money they owe. Each entry should net to zero.</p></section>';
+  state.money.forEach((m,i)=>{
+    h+='<div class="moneyrow"><div class="moneyhead"><input type="text" data-f="moneylabel" data-i="'+i+'" value="'+esc(m.label)+'" maxlength="30" aria-label="Entry '+(i+1)+' label"><span id="moneybal-'+i+'">'+moneyBalanceHTML(i)+'</span></div><div class="moneygrid">'+
+      state.players.map(p=>{
+      const v=m.amounts[p.id]||'', neg=/^\s*-/.test(v);
+      return '<div class="moneycell"><span class="mcname">'+esc(first(p.name))+'</span><div class="mcrow"><button type="button" class="signbtn'+(neg?' neg':'')+'" data-act="moneysign" data-i="'+i+'" data-p="'+p.id+'" aria-pressed="'+neg+'" aria-label="Toggle negative for '+esc(first(p.name))+'">'+MINUS+'</button><input type="text" inputmode="decimal" autocomplete="off" data-f="money" data-i="'+i+'" data-p="'+p.id+'" value="'+esc(v)+'" placeholder="0"></div></div>';
+    }).join('')+
+    '</div></div>';
+  });
+  h+='<div class="tblwrap"><table class="sumtbl"><thead><tr><th scope="col">Net so far</th>'+state.players.map(p=>'<th scope="col">'+esc(first(p.name))+'</th>').join('')+'</tr></thead><tbody><tr><td>Total</td>'+
+    state.players.map(p=>'<td class="tc num" id="moneytot-'+p.id+'">'+fmtMoney(playerMoneyTotal(p.id))+'</td>').join('')+'</tr></tbody></table></div>';
+  h+='<p class="cnote" id="moneygrand">'+moneyGrandText()+'</p>';
+  return h;
+}
 function renderSetup(){
   let h='';
   if(!state.configured){
@@ -757,7 +834,7 @@ function exampleText(){
 let refocus=null;
 function render(){
   const C=compute();
-  $('#view').innerHTML=ui.tab==='board'?renderBoard(C):ui.tab==='score'?renderScore(C):ui.tab==='card'?renderCard(C):renderSetup();
+  $('#view').innerHTML=ui.tab==='board'?renderBoard(C):ui.tab==='score'?renderScore(C):ui.tab==='card'?renderCard(C):ui.tab==='money'?renderMoney():renderSetup();
   document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.tab===ui.tab?'page':'false'));
   if(ui.tab==='score'){
     const c=$('.holes'), cur=$('.pill.cur');
@@ -864,6 +941,15 @@ document.addEventListener('click',e=>{
     inp.value=isPlus(v)?v.replace(/^[+\-]\s*/,''):'+'+v;
     setHcp(p,inp.value);
   }
+  else if(a==='moneysign'){
+    const i=+t.dataset.i, pid=t.dataset.p, inp=$('[data-f="money"][data-i="'+i+'"][data-p="'+pid+'"]');
+    let v=String(inp.value||'').trim();
+    v=v.startsWith('-')?v.slice(1):(v===''?'-':'-'+v);
+    inp.value=v;
+    setMoney(i,pid,v);
+    inp.focus();
+    try{inp.setSelectionRange(v.length,v.length);}catch(e){}
+  }
   else if(a==='cardround'){ui.cardRound=+t.dataset.r;render();window.scrollTo(0,0);}
   else if(a==='cardview'){ui.cardView=t.dataset.v;render();}
   else if(a==='cardpar'){
@@ -926,6 +1012,8 @@ document.addEventListener('input',e=>{
   }
   else if(f==='course'){state.courses[+t.dataset.i]=t.value;save();}
   else if(f==='teename'){state.rounds[+t.dataset.i].tee.name=t.value;save();}
+  else if(f==='moneylabel'){state.money[+t.dataset.i].label=t.value;save();}
+  else if(f==='money'){ setMoney(+t.dataset.i,t.dataset.p,t.value); }
   else if(f==='slope'||f==='rating'){
     const i=+t.dataset.i, rd=state.rounds[i];
     rd.tee[f]=t.value;
