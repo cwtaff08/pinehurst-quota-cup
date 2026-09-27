@@ -520,11 +520,12 @@ function compute(){
   return state.players.map(p=>{
     const rounds=[];
     const idx=hcpNum(p.hcp);
-    let adjustSum=0, total=0, pts=0;
+    let adjustSum=0, total=0, pts=0, lastBaseline=0;
     for(let r=0;r<NR;r++){
       const par=coursePar(r), tee=state.rounds[r].tee||{};
       const ch=idx==null?null:courseHandicap(idx,tee.slope,tee.rating,par);
       const baseline=idx==null?(+p.quota||0):Math.max(0,QBASE-ch);
+      lastBaseline=baseline;
       const auto=q2(baseline+adjustSum);
       const ov=state.rounds[r].quotaOverride[p.id];
       const quota=ov!=null?ov:auto;
@@ -542,7 +543,8 @@ function compute(){
       }
     }
     const nowIdx=rounds.findIndex(x=>!x.complete);
-    return {p,rounds,total,pts,nowIdx,nowQuota:nowIdx>=0?rounds[nowIdx].quota:q};
+    const nowQuota=nowIdx>=0?rounds[nowIdx].quota:q2(lastBaseline+adjustSum);
+    return {p,rounds,total,pts,nowIdx,nowQuota};
   });
 }
 function rankOf(C){
@@ -832,15 +834,29 @@ function exampleText(){
 }
 
 let refocus=null;
+function recoveryHTML(err){
+  return '<section class="panel intro"><h2>Something went wrong</h2>'
+    +'<p>The screen couldn\u2019t update, but your scores are still saved on this phone \u2014 nothing is lost. Tap Export backup, copy the text, and send it over so this can get fixed.</p>'
+    +'<div class="actions"><button class="btn primary" data-act="export">Export backup</button><button class="btn" data-act="tab" data-tab="board">Try again</button></div>'
+    +'<p class="muted sm" style="margin-top:10px">For reference, the error was: '+esc(String((err&&err.message)||err||'unknown'))+'</p></section>';
+}
 function render(){
-  const C=compute();
-  $('#view').innerHTML=ui.tab==='board'?renderBoard(C):ui.tab==='score'?renderScore(C):ui.tab==='card'?renderCard(C):ui.tab==='money'?renderMoney():renderSetup();
-  document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.tab===ui.tab?'page':'false'));
-  if(ui.tab==='score'){
-    const c=$('.holes'), cur=$('.pill.cur');
-    if(c&&cur) c.scrollLeft=cur.offsetLeft-c.clientWidth/2+cur.clientWidth/2;
+  let html;
+  try{
+    const C=compute();
+    html=ui.tab==='board'?renderBoard(C):ui.tab==='score'?renderScore(C):ui.tab==='card'?renderCard(C):ui.tab==='money'?renderMoney():renderSetup();
+  }catch(err){
+    html=recoveryHTML(err);
   }
-  if(refocus){const el=$(refocus);if(el)el.focus({preventScroll:true});refocus=null;}
+  $('#view').innerHTML=html;
+  try{
+    document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.tab===ui.tab?'page':'false'));
+    if(ui.tab==='score'){
+      const c=$('.holes'), cur=$('.pill.cur');
+      if(c&&cur) c.scrollLeft=cur.offsetLeft-c.clientWidth/2+cur.clientWidth/2;
+    }
+    if(refocus){const el=$(refocus);if(el)el.focus({preventScroll:true});refocus=null;}
+  }catch(err){}
 }
 
 /* ---------- dialogs ---------- */
@@ -1056,9 +1072,13 @@ document.addEventListener('change',e=>{
   }
 });
 
-ui.round=currentRound();
-ui.hole=firstOpenHole(ui.round);
-ui.cardRound=latestRound();
+try{
+  ui.round=currentRound();
+  ui.hole=firstOpenHole(ui.round);
+  ui.cardRound=latestRound();
+}catch(err){
+  ui.round=0; ui.hole=0; ui.cardRound=0;
+}
 render();
 })();
 </script>
